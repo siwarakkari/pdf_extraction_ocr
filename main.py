@@ -368,8 +368,11 @@ async def extract_meeting_actions(
             tmp_path = tmp_file.name
 
         # Process the spreadsheet
+        print(f"DEBUG: Processing spreadsheet '{filename}' for meeting '{meeting_name_value}'")
         processor = SpreadsheetProcessor(tmp_path)
+        print(f"DEBUG: Spreadsheet loaded successfully, columns: {list(processor.df.columns)}")
         meeting_data = processor.extract_meeting_info(meeting_name_value)
+        print(f"DEBUG: Found {len(meeting_data)} actions for meeting '{meeting_name_value}'")
 
         # Remove temp file
         os.remove(tmp_path)
