@@ -1,6 +1,62 @@
 
 from difflib import get_close_matches
 from typing import Optional
+import re
+
+def _is_valid_person_name(name: str) -> bool:
+    """
+    Validate if a string looks like a person name (not notes or other text).
+    """
+    if not name or len(name.strip()) == 0:
+        return False
+    
+    # Skip very long text (likely notes or descriptions)
+    if len(name) > 100:
+        return False
+    
+    # Skip text that contains common note indicators
+    note_indicators = [
+        "تتم الموائمة",
+        "الإدارة العامة",
+        "المجالس واللجان",
+        "حوكمة",
+        "مبدئية",
+        "غير معتمدة",
+        "موافقة معالي الوزير",
+        "جميع المقترحات",
+        "تعتبر",
+        "حتى يتم"
+    ]
+    
+    for indicator in note_indicators:
+        if indicator in name:
+            return False
+    
+    # Skip text that looks like meeting titles (contains common meeting words)
+    meeting_words = [
+        "اجتماع",
+        "لجنة",
+        "مجلس",
+        "قطاع",
+        "تحديثات",
+        "خطة",
+        "برنامج",
+        "مواضيع"
+    ]
+    
+    meeting_word_count = sum(1 for word in meeting_words if word in name)
+    if meeting_word_count >= 2:  # If it contains 2+ meeting-related words, it's likely a meeting title
+        return False
+    
+    # Skip pure numbers
+    if name.strip().isdigit():
+        return False
+    
+    # Skip text that's mostly punctuation or special characters
+    if len(re.sub(r'[^\w\s]', '', name)) < len(name) * 0.3:
+        return False
+    
+    return True
 
 def find_person_for_meeting(meeting_name: str, ocr_data: dict, meeting_col: int = 1, person_col: int = 2) -> Optional[str]:
     """
@@ -80,9 +136,13 @@ def find_person_for_meeting(meeting_name: str, ocr_data: dict, meeting_col: int 
 
         print(f"DEBUG: Checking person '{person_name}' at row {start} (span: {span}, end: {end})")
         
-        if start <= matched_row <= end:
-            print(f"DEBUG: Found matching person '{person_name}' for meeting '{matched_meeting}'")
-            return person_name
+        # Validate that this looks like a person name (not notes or other text)
+        if _is_valid_person_name(person_name):
+            if start <= matched_row <= end:
+                print(f"DEBUG: Found matching person '{person_name}' for meeting '{matched_meeting}'")
+                return person_name
+        else:
+            print(f"DEBUG: Skipping invalid person name: '{person_name}'")
 
     print(f"DEBUG: No person found for meeting '{matched_meeting}' at row {matched_row}")
     
@@ -140,7 +200,7 @@ def find_person_for_meeting(meeting_name: str, ocr_data: dict, meeting_col: int 
                         end = start + span - 1
                         person_name = cell.get("content", "").strip()
                         
-                        if start <= alt_matched_row <= end:
+                        if _is_valid_person_name(person_name) and start <= alt_matched_row <= end:
                             print(f"DEBUG: Found person '{person_name}' with alternative column config")
                             return person_name
     

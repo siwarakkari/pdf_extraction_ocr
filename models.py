@@ -76,6 +76,7 @@ class ReplacePersonResponse(BaseModel):
 class MeetingAction(BaseModel):
     action_name: str
     status: str
+    meeting_name: str
 
 class ExtractActionsResponse(BaseModel):
     meeting_data: List[MeetingAction]

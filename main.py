@@ -381,7 +381,11 @@ async def extract_meeting_actions(
             raise HTTPException(status_code=404, detail=f"No rows found for meeting '{meeting_name_value}'")
 
         # Convert to response format
-        actions = [MeetingAction(action_name=item["action_name"], status=item["status"]) for item in meeting_data]
+        actions = [MeetingAction(
+            action_name=item["action_name"], 
+            status=item["status"],
+            meeting_name=item["meeting_name"]
+        ) for item in meeting_data]
         return ExtractActionsResponse(meeting_data=actions)
 
     except Exception as e:

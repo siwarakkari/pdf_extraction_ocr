@@ -70,7 +70,8 @@ class SpreadsheetProcessor:
         for _, row in filtered.iterrows():
             actions.append({
                 "action_name": str(row["Action Title"]),
-                "status": str(row["Status"])
+                "status": str(row["Status"]),
+                "meeting_name": str(row["Meeting"])
             })
 
         return actions
