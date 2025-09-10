@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 
 class TableCell(BaseModel):
     content: str
@@ -7,7 +7,6 @@ class TableCell(BaseModel):
     column_index: int
     row_span: Optional[int] = 1
     column_span: Optional[int] = 1
-
 class Table(BaseModel):
     row_count: int
     column_count: int

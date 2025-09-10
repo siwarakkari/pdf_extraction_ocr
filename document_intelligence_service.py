@@ -1,7 +1,8 @@
 import io
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from models import Table, TableCell, PageWithTables, PDFAnalysisResponse
 import config
+import re
 
 class DocumentIntelligenceService:
     def __init__(self):
@@ -62,7 +63,8 @@ class DocumentIntelligenceService:
                             extracted_table = self._extract_table_data(table)
                             if extracted_table:
                                 tables.append(extracted_table)
-                
+                            
+            
                 # Create page object
                 page_with_tables = PageWithTables(
                     page_number=page_number,
@@ -109,8 +111,9 @@ class DocumentIntelligenceService:
                     row_index=cell.row_index if hasattr(cell, 'row_index') else 0,
                     column_index=cell.column_index if hasattr(cell, 'column_index') else 0,
                     row_span=cell.row_span if hasattr(cell, 'row_span') else 1,
-                    column_span=cell.column_span if hasattr(cell, 'column_span') else 1
-                )
+                    column_span=cell.column_span if hasattr(cell, 'column_span') else 1)
+            
+
                 cells.append(table_cell)
         
         return Table(
@@ -118,3 +121,4 @@ class DocumentIntelligenceService:
             column_count=table.column_count if hasattr(table, 'column_count') else 0,
             cells=cells
         )
+    
