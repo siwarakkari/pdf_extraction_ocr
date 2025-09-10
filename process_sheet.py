@@ -1,6 +1,8 @@
 import pandas as pd
 from typing import List, Dict
 
+import re
+
 class SpreadsheetProcessor:
     """
     Process a spreadsheet and extract specific columns based on a given parameter.
@@ -40,6 +42,24 @@ class SpreadsheetProcessor:
             raise ValueError(f"Failed to load file '{file_path}': {str(e)}")
 
 
+    def clean_meeting_name(self,name: str) -> str:
+        """
+        Clean Arabic meeting name by removing extra spaces, trailing dots, and 'تحديثات/' prefix.
+        """
+        if not name:
+            return name
+        
+        # Remove extra spaces
+        cleaned = re.sub(r'\s+', ' ', name.strip())
+        
+        # Remove trailing dots only
+        cleaned = re.sub(r'\.+$', '', cleaned)
+        
+        # Remove 'تحديثات/' prefix (including variations with extra spaces)
+        cleaned = re.sub(r'^(تحديثات\s*/+\s*)', '', cleaned)
+        
+        return cleaned
+
     def extract_meeting_info(self, meeting_name: str) -> List[Dict[str, str]]:
         """
         Extract status and action name columns corresponding to the given meeting.
@@ -52,17 +72,22 @@ class SpreadsheetProcessor:
             if col not in self.df.columns:
                 raise ValueError(f"Column '{col}' not found in the sheet")
 
-        # Filter rows by meeting (case-insensitive and handle whitespace)
-        # First try exact match
-        filtered = self.df[self.df["Meeting"].str.strip() == meeting_name.strip()]
+        # Clean the input meeting name
+        cleaned_input = self.clean_meeting_name(meeting_name)
+        
+        # Clean meeting names in dataframe
+        self.df["Cleaned_Meeting"] = self.df["Meeting"].apply(self.clean_meeting_name)
+        
+        # Try exact match with cleaned names
+        filtered = self.df[self.df["Cleaned_Meeting"] == cleaned_input]
         
         # If no exact match, try case-insensitive match
         if filtered.empty:
-            filtered = self.df[self.df["Meeting"].str.strip().str.lower() == meeting_name.strip().lower()]
+            filtered = self.df[self.df["Cleaned_Meeting"].str.lower() == cleaned_input.lower()]
         
         # If still no match, try partial matching
         if filtered.empty:
-            filtered = self.df[self.df["Meeting"].str.contains(meeting_name, case=False, na=False)]
+            filtered = self.df[self.df["Cleaned_Meeting"].str.contains(cleaned_input, case=False, na=False)]
 
         # Build JSON output
         actions = []
@@ -71,8 +96,10 @@ class SpreadsheetProcessor:
             actions.append({
                 "action_name": str(row["Action Title"]),
                 "status": str(row["Status"]),
-                "meeting_name": str(row["Meeting"])
+                "meeting_name": str(row["Meeting"])  # Return original meeting name, not cleaned
             })
 
-        return actions
+        # Clean up temporary column
+        self.df = self.df.drop("Cleaned_Meeting", axis=1, errors='ignore')
 
+        return actions

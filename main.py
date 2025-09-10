@@ -390,8 +390,6 @@ async def extract_meeting_actions(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process spreadsheet: {str(e)}")
-    
-
 
 @app.post("/get_daily_schedule")
 async def get_daily_schedule(
