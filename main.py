@@ -265,15 +265,48 @@ async def get_replace_person(
         
         # Transform the result to add field keys
         transformed_result = _transform_to_keyed_tables(result)
+        
+        # Debug: Log the transformed result structure
+        print(f"DEBUG: Looking for meeting '{meeting_name_value}'")
+        print(f"DEBUG: Found {len(transformed_result.get('pages_with_tables', []))} pages with tables")
+        
+        # Debug: Inspect table structure
+        for page in transformed_result.get('pages_with_tables', []):
+            print(f"DEBUG: Page {page.get('page_number')} has {len(page.get('tables', []))} tables")
+            for table_idx, table in enumerate(page.get('tables', [])):
+                print(f"DEBUG: Table {table_idx}: {table.get('row_count')} rows x {table.get('column_count')} columns")
+                # Show first few cells to understand structure
+                cells = table.get('cells', [])
+                if cells:
+                    print(f"DEBUG: Sample cells from table {table_idx}:")
+                    for i, cell in enumerate(cells[:10]):  # Show first 10 cells
+                        print(f"  Cell {i}: row={cell.get('row_index')}, col={cell.get('column_index')}, content='{cell.get('content', '')[:50]}'")
+        
         name = find_person_for_meeting(meeting_name_value, transformed_result)
         
         if not name:
-            raise HTTPException(status_code=404, detail=f"No replacement person found for meeting: {meeting_name_value}")
+            # Provide more detailed error information
+            available_meetings = []
+            for page in transformed_result.get("pages_with_tables", []):
+                for table in page.get("tables", []):
+                    for cell in table.get("cells", []):
+                        if cell.get("column_index") == 1 and cell.get("row_index") > 1:
+                            content = cell.get("content", "").strip()
+                            if content:
+                                available_meetings.append(content)
+            
+            error_msg = f"No replacement person found for meeting '{meeting_name_value}'. Available meetings: {available_meetings[:10]}"
+            raise HTTPException(status_code=404, detail=error_msg)
         
         return ReplacePersonResponse(name=name)
         
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error finding replacement person: {str(e)}")
+        # Provide more detailed error information
+        error_detail = str(e) if str(e) else "Unknown error occurred"
+        raise HTTPException(status_code=500, detail=f"Error finding replacement person: {error_detail}")
 
 
 @app.post("/extract_actions")
