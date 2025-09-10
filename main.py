@@ -3,26 +3,21 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from calcul_activity_score import _analyze_table_keys, extract_table_columns
 from delete_pages import normalize_page_indices_to_keep, pdf_subset
-from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
+from fastapi.responses import JSONResponse, FileResponse,StreamingResponse
 from document_intelligence_service import DocumentIntelligenceService
 from get_replace_person import find_person_for_meeting
 from models import (
-    PDFAnalysisResponse, 
-    PresentationDetailsRequest, 
-    ReplacePersonRequest, 
-    ExtractActionsRequest, 
-    DailyScheduleRequest, 
-    DailyMeetingRequest,
-    PresentationDetailsResponse,
-    ReplacePersonResponse,
-    ExtractActionsResponse,
-    DailyScheduleResponse,
-    DailyMeetingResponse
+    PDFAnalysisResponse, OpenAIFileRef, OpenAIFileOut, 
+    PresentationDetailsRequest, ReplacePersonRequest, ExtractActionsRequest,
+    DailyScheduleRequest, DailyMeetingRequest, PresentationDetailsResponse,
+    ReplacePersonResponse, ExtractActionsResponse, DailyScheduleResponse,
+    DailyMeetingResponse, PresentationDetails, PresentationRemarks,
+    PresentationScore, MeetingAction
 )
 from process_sheet import SpreadsheetProcessor
-from utils import process_openai_files, create_openai_file_response, get_mime_type_from_filename
 import os 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+import httpx
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from io import BytesIO
 from pypdf import PdfReader
 from typing import Union
@@ -39,6 +34,22 @@ app = FastAPI(
 # Initialize the document intelligence service
 doc_service = None
 
+async def download_file_from_openai(file_ref: OpenAIFileRef) -> bytes:
+    """Download file content from OpenAI file reference"""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(file_ref.download_link)
+        response.raise_for_status()
+        return response.content
+
+def create_openai_file_response(file_content: bytes, filename: str, mime_type: str) -> OpenAIFileOut:
+    """Create OpenAI file response with base64 encoded content"""
+    encoded_content = base64.b64encode(file_content).decode('utf-8')
+    return OpenAIFileOut(
+        name=filename,
+        mime_type=mime_type,
+        content=encoded_content
+    )
+
 @app.get("/")
 async def root():
     return {"message": "PDF Table Extraction API is running"}
@@ -47,30 +58,44 @@ async def root():
 async def health_check():
     return {"status": "healthy"}
 
-@app.post("/get_presentation_details", response_model=PresentationDetailsResponse)
+@app.post("/get_presentation_details")
 async def get_presentation_details(
-    request: Union[PresentationDetailsRequest, None] = None,
-    file: Union[UploadFile, None] = File(None)
+    request: Request,
+    file: UploadFile = File(None),
+    json_request: PresentationDetailsRequest = None
 ):
-    """Analyze meeting presentation and return scores + remarks. When called from a Custom GPT, send JSON with openaiFileIdRefs."""
+    """Analyze meeting presentation and return scores + remarks. Supports both JSON (GPT) and PDF upload."""
     try:
         pdf_content = None
         
-        # Handle OpenAI file refs (from GPT)
-        if request and request.openaiFileIdRefs:
-            file_contents = await process_openai_files(request.openaiFileIdRefs)
-            pdf_content = file_contents[0]  # Use first file
-        # Handle direct file upload
-        elif file:
+        # Check if this is a JSON request (from GPT)
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            if json_request is None:
+                body = await request.json()
+                json_request = PresentationDetailsRequest(**body)
+            
+            # Download file from OpenAI
+            if not json_request.openaiFileIdRefs:
+                raise HTTPException(status_code=400, detail="No file references provided")
+            
+            file_ref = json_request.openaiFileIdRefs[0]
+            pdf_content = await download_file_from_openai(file_ref)
+            
+        # Handle direct PDF upload
+        elif file is not None:
             if not file.filename.lower().endswith('.pdf'):
                 raise HTTPException(status_code=400, detail="Only PDF files are supported")
+            
             pdf_content = await file.read()
+        
         else:
-            raise HTTPException(status_code=400, detail="Either OpenAI file refs or direct file upload required")
+            raise HTTPException(status_code=400, detail="Either file upload or JSON request required")
         
         if not pdf_content:
             raise HTTPException(status_code=400, detail="Empty file provided")
         
+        # Process the PDF
         reader = PdfReader(BytesIO(pdf_content))
         total = len(reader.pages)
         pages_to_remove = [1, total]
@@ -91,20 +116,32 @@ async def get_presentation_details(
         remarks = extract_table_columns(transformed_result)
         
         # Format response according to OpenAPI spec
-        result_data = []
+        response_data = []
         
-        # Add summary data
-        for key, data in summary.items():
-            result_data.append({key: data})
+        # Add presentation details (scores)
+        if summary:
+            presentation_score = PresentationScore(
+                تم_عكس_التوجيه=summary.get("تم عكس التوجيه", 0),
+                معكوس_جزئياً=summary.get("معكوس جزئياً", 0),
+                غير_معكوسة=summary.get("غير معكوسة", 0),
+                خارج_نطاق_العرض=summary.get("خارج نطاق العرض", 0),
+                score=summary.get("score", 0.0)
+            )
+            presentation_details = PresentationDetails(مطابقة_العرض=presentation_score)
+            response_data.append(presentation_details)
         
-        # Add remarks data
-        result_data.append({"الملاحظات": remarks.get("الملاحظات", [])})
-        result_data.append({"التوصية": remarks.get("التوصية", [])})
+        # Add remarks and recommendations
+        if remarks:
+            presentation_remarks = PresentationRemarks(
+                الملاحظات=remarks.get("الملاحظات", []),
+                التوصية=remarks.get("التوصية", [])
+            )
+            response_data.append(presentation_remarks)
         
-        return PresentationDetailsResponse(result=result_data)
+        return PresentationDetailsResponse(result=response_data)
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error extracting presentation details: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error analyzing presentation: {str(e)}")
 
 def _transform_to_keyed_tables(result: PDFAnalysisResponse) -> dict:
     """Transform table data to include field keys"""
@@ -165,37 +202,51 @@ def _transform_to_keyed_tables(result: PDFAnalysisResponse) -> dict:
         "pages_with_tables_count": result.pages_with_tables_count
     }
 
-@app.post("/get_replace_person", response_model=ReplacePersonResponse)
+@app.post("/get_replace_person")
 async def get_replace_person(
-    request: Union[ReplacePersonRequest, None] = None,
-    file: Union[UploadFile, None] = File(None),
-    meeting_name: Union[str, None] = Form(None)
+    request: Request,
+    file: UploadFile = File(None),
+    meeting_name: str = Form(None),
+    json_request: ReplacePersonRequest = None
 ):
-    """Find replacement person in meeting. Upload a PDF and specify a meeting name. Returns the replacement person associated with that meeting."""
+    """Find replacement person in meeting. Supports both JSON (GPT) and multipart upload."""
     try:
         pdf_content = None
-        meeting_name_param = None
+        meeting_name_value = None
         
-        # Handle OpenAI file refs (from GPT)
-        if request and request.openaiFileIdRefs:
-            file_contents = await process_openai_files(request.openaiFileIdRefs)
-            pdf_content = file_contents[0]  # Use first file
-            meeting_name_param = request.meeting_name
-        # Handle direct file upload
-        elif file and meeting_name:
+        # Check if this is a JSON request (from GPT)
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            if json_request is None:
+                body = await request.json()
+                json_request = ReplacePersonRequest(**body)
+            
+            # Download file from OpenAI
+            if not json_request.openaiFileIdRefs:
+                raise HTTPException(status_code=400, detail="No file references provided")
+            
+            file_ref = json_request.openaiFileIdRefs[0]
+            pdf_content = await download_file_from_openai(file_ref)
+            meeting_name_value = json_request.meeting_name
+            
+        # Handle multipart form data
+        elif file is not None and meeting_name is not None:
             if not file.filename.lower().endswith('.pdf'):
                 raise HTTPException(status_code=400, detail="Only PDF files are supported")
+            
             pdf_content = await file.read()
-            meeting_name_param = meeting_name
+            meeting_name_value = meeting_name
+            
         else:
-            raise HTTPException(status_code=400, detail="Either OpenAI file refs or direct file upload with meeting_name required")
+            raise HTTPException(status_code=400, detail="Either JSON request or multipart form data required")
         
         if not pdf_content:
             raise HTTPException(status_code=400, detail="Empty file provided")
         
-        if not meeting_name_param:
+        if not meeting_name_value:
             raise HTTPException(status_code=400, detail="Meeting name is required")
         
+        # Process the PDF
         reader = PdfReader(BytesIO(pdf_content))
         total = len(reader.pages)
         pages_to_remove = [16]
@@ -214,10 +265,10 @@ async def get_replace_person(
         
         # Transform the result to add field keys
         transformed_result = _transform_to_keyed_tables(result)
-        name = find_person_for_meeting(meeting_name_param, transformed_result)
+        name = find_person_for_meeting(meeting_name_value, transformed_result)
         
         if not name:
-            raise HTTPException(status_code=404, detail=f"No replacement person found for meeting: {meeting_name_param}")
+            raise HTTPException(status_code=404, detail=f"No replacement person found for meeting: {meeting_name_value}")
         
         return ReplacePersonResponse(name=name)
         
@@ -225,69 +276,77 @@ async def get_replace_person(
         raise HTTPException(status_code=500, detail=f"Error finding replacement person: {str(e)}")
 
 
-@app.post("/extract_actions", response_model=ExtractActionsResponse)
+@app.post("/extract_actions")
 async def extract_meeting_actions(
-    request: Union[ExtractActionsRequest, None] = None,
-    file: Union[UploadFile, None] = File(None),
-    meeting_name: Union[str, None] = Form(None)
+    request: Request,
+    file: UploadFile = File(None),
+    meeting_name: str = Form(None),
+    json_request: ExtractActionsRequest = None
 ):
-    """Extract meeting actions. Upload an Excel/CSV and specify a meeting name. Returns the action names and statuses."""
+    """Extract meeting actions from Excel/CSV. Supports both JSON (GPT) and multipart upload."""
     try:
         file_content = None
-        meeting_name_param = None
+        meeting_name_value = None
         filename = None
         
-        # Handle OpenAI file refs (from GPT)
-        if request and request.openaiFileIdRefs:
-            file_contents = await process_openai_files(request.openaiFileIdRefs)
-            file_content = file_contents[0]  # Use first file
-            meeting_name_param = request.meeting_name
-            filename = request.openaiFileIdRefs[0].name or "spreadsheet.xlsx"
-        # Handle direct file upload
-        elif file and meeting_name:
+        # Check if this is a JSON request (from GPT)
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            if json_request is None:
+                body = await request.json()
+                json_request = ExtractActionsRequest(**body)
+            
+            # Download file from OpenAI
+            if not json_request.openaiFileIdRefs:
+                raise HTTPException(status_code=400, detail="No file references provided")
+            
+            file_ref = json_request.openaiFileIdRefs[0]
+            file_content = await download_file_from_openai(file_ref)
+            meeting_name_value = json_request.meeting_name
+            filename = file_ref.name or "spreadsheet.xlsx"
+            
+        # Handle multipart form data
+        elif file is not None and meeting_name is not None:
+            # Validate file type
             if file.content_type not in (
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 "application/vnd.ms-excel",
                 "text/csv"
             ):
                 raise HTTPException(status_code=400, detail="Unsupported file type. Use Excel or CSV")
+            
             file_content = await file.read()
-            meeting_name_param = meeting_name
+            meeting_name_value = meeting_name
             filename = file.filename
+            
         else:
-            raise HTTPException(status_code=400, detail="Either OpenAI file refs or direct file upload with meeting_name required")
-
+            raise HTTPException(status_code=400, detail="Either JSON request or multipart form data required")
+        
         if not file_content:
             raise HTTPException(status_code=400, detail="Empty file provided")
         
-        if not meeting_name_param:
+        if not meeting_name_value:
             raise HTTPException(status_code=400, detail="Meeting name is required")
-
+        
         # Save file temporarily
-        suffix = Path(filename).suffix if filename else '.xlsx'
-        with NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+        file_extension = Path(filename).suffix
+        with NamedTemporaryFile(delete=False, suffix=file_extension) as tmp_file:
             tmp_file.write(file_content)
             tmp_path = tmp_file.name
 
         # Process the spreadsheet
         processor = SpreadsheetProcessor(tmp_path)
-        meeting_data = processor.extract_meeting_info(meeting_name_param)
+        meeting_data = processor.extract_meeting_info(meeting_name_value)
 
         # Remove temp file
         os.remove(tmp_path)
 
-        if not meeting_data or not meeting_data.get("actions"):
-            raise HTTPException(status_code=404, detail=f"No rows found for meeting '{meeting_name_param}'")
+        if not meeting_data:
+            raise HTTPException(status_code=404, detail=f"No rows found for meeting '{meeting_name_value}'")
 
-        # Format response according to OpenAPI spec
-        formatted_actions = []
-        for action in meeting_data["actions"]:
-            formatted_actions.append({
-                "action_name": action["action_name"],
-                "status": action["status"]
-            })
-
-        return ExtractActionsResponse(meeting_data=formatted_actions)
+        # Convert to response format
+        actions = [MeetingAction(action_name=item["action_name"], status=item["status"]) for item in meeting_data]
+        return ExtractActionsResponse(meeting_data=actions)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process spreadsheet: {str(e)}")
@@ -296,39 +355,50 @@ async def extract_meeting_actions(
 
 @app.post("/get_daily_schedule")
 async def get_daily_schedule(
-    request: Union[DailyScheduleRequest, None] = None,
-    file: Union[UploadFile, None] = File(None)
+    request: Request,
+    file: UploadFile = File(None),
+    json_request: DailyScheduleRequest = None
 ):
-    """Clean daily schedule PDF. Remove unnecessary pages (1, 2, last). For GPT, send JSON with openaiFileIdRefs and return the cleaned PDF via openaiFileResponse."""
+    """Clean daily schedule PDF by removing unnecessary pages. Supports both JSON (GPT) and multipart upload."""
     try:
         pdf_content = None
-        filename = None
         
-        # Handle OpenAI file refs (from GPT)
-        if request and request.openaiFileIdRefs:
-            file_contents = await process_openai_files(request.openaiFileIdRefs)
-            pdf_content = file_contents[0]  # Use first file
-            filename = request.openaiFileIdRefs[0].name or "daily_schedule.pdf"
-        # Handle direct file upload
-        elif file:
+        # Check if this is a JSON request (from GPT)
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            if json_request is None:
+                body = await request.json()
+                json_request = DailyScheduleRequest(**body)
+            
+            # Download file from OpenAI
+            if not json_request.openaiFileIdRefs:
+                raise HTTPException(status_code=400, detail="No file references provided")
+            
+            file_ref = json_request.openaiFileIdRefs[0]
+            pdf_content = await download_file_from_openai(file_ref)
+            
+        # Handle multipart form data
+        elif file is not None:
             if file.content_type not in ("application/pdf", "application/octet-stream"):
                 raise HTTPException(status_code=400, detail="Please upload a PDF file")
+            
             pdf_content = await file.read()
-            filename = file.filename
+            
         else:
-            raise HTTPException(status_code=400, detail="Either OpenAI file refs or direct file upload required")
+            raise HTTPException(status_code=400, detail="Either JSON request or multipart form data required")
         
         if not pdf_content:
             raise HTTPException(status_code=400, detail="Empty file provided")
         
+        # Process the PDF
         reader = PdfReader(BytesIO(pdf_content))
         total = len(reader.pages)
         pages_to_remove = [1, 2, total]
         keep = normalize_page_indices_to_keep(total, pages_to_remove)
         new_pdf = pdf_subset(pdf_content, keep)
         
-        # If called from GPT, return OpenAI file response
-        if request and request.openaiFileIdRefs:
+        # Check if this is a JSON request (return OpenAI file response)
+        if "application/json" in content_type:
             file_response = create_openai_file_response(
                 new_pdf, 
                 "Daily_schedule_table.pdf", 
@@ -336,7 +406,7 @@ async def get_daily_schedule(
             )
             return DailyScheduleResponse(openaiFileResponse=[file_response])
         
-        # For direct file upload, return streaming response
+        # Return streaming response for multipart requests
         return StreamingResponse(
             BytesIO(new_pdf), 
             media_type="application/pdf",
@@ -346,35 +416,49 @@ async def get_daily_schedule(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing daily schedule: {str(e)}")
 
-@app.post("/get_daily_meeting", response_model=DailyMeetingResponse)
+@app.post("/get_daily_meeting")
 async def get_daily_meeting(
-    request: Union[DailyMeetingRequest, None] = None,
-    file: Union[UploadFile, None] = File(None)
+    request: Request,
+    file: UploadFile = File(None),
+    json_request: DailyMeetingRequest = None
 ):
-    """Extract daily meetings. Extract structured meeting names from a daily schedule PDF."""
+    """Extract structured meeting names from a daily schedule PDF. Supports both JSON (GPT) and PDF upload."""
     try:
         pdf_content = None
         
-        # Handle OpenAI file refs (from GPT)
-        if request and request.openaiFileIdRefs:
-            file_contents = await process_openai_files(request.openaiFileIdRefs)
-            pdf_content = file_contents[0]  # Use first file
-        # Handle direct file upload
-        elif file:
+        # Check if this is a JSON request (from GPT)
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            if json_request is None:
+                body = await request.json()
+                json_request = DailyMeetingRequest(**body)
+            
+            # Download file from OpenAI
+            if not json_request.openaiFileIdRefs:
+                raise HTTPException(status_code=400, detail="No file references provided")
+            
+            file_ref = json_request.openaiFileIdRefs[0]
+            pdf_content = await download_file_from_openai(file_ref)
+            
+        # Handle direct PDF upload
+        elif file is not None:
             if file.content_type not in ("application/pdf", "application/octet-stream"):
                 raise HTTPException(status_code=400, detail="Please upload a PDF file")
+
             if not file.filename.lower().endswith('.pdf'):
                 raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
             pdf_content = await file.read()
+            
         else:
-            raise HTTPException(status_code=400, detail="Either OpenAI file refs or direct file upload required")
+            raise HTTPException(status_code=400, detail="Either JSON request or PDF upload required")
 
         if not pdf_content:
             raise HTTPException(status_code=400, detail="Empty file provided")
 
+        # Process the PDF
         reader = PdfReader(BytesIO(pdf_content))
         total = len(reader.pages)
-
         pages_to_remove = [1, 2, total]
 
         # Normalize and subset
@@ -396,6 +480,6 @@ async def get_daily_meeting(
         meetings = extract_table_columns(transformed_result, target_columns=["الاجتماع"])
 
         return DailyMeetingResponse(meetings=meetings)
-
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error extracting daily meetings: {str(e)}")

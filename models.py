@@ -7,7 +7,6 @@ class TableCell(BaseModel):
     column_index: int
     row_span: Optional[int] = 1
     column_span: Optional[int] = 1
-
 class Table(BaseModel):
     row_count: int
     column_count: int
@@ -23,7 +22,7 @@ class PDFAnalysisResponse(BaseModel):
     total_pages: int
     pages_with_tables_count: int
 
-# OpenAI GPT Integration Models
+# GPT-specific models
 class OpenAIFileRef(BaseModel):
     name: Optional[str] = None
     id: Optional[str] = None
@@ -33,10 +32,9 @@ class OpenAIFileRef(BaseModel):
 class OpenAIFileOut(BaseModel):
     name: str
     mime_type: str
-    content: Optional[str] = None  # Base64-encoded content
-    url: Optional[str] = None  # Public URL
+    content: Optional[str] = None  # Base64-encoded file content
+    url: Optional[str] = None  # Publicly accessible URL
 
-# Request Models
 class PresentationDetailsRequest(BaseModel):
     openaiFileIdRefs: List[OpenAIFileRef]
 
@@ -54,15 +52,33 @@ class DailyScheduleRequest(BaseModel):
 class DailyMeetingRequest(BaseModel):
     openaiFileIdRefs: List[OpenAIFileRef]
 
-# Response Models
+# Response models
+class PresentationScore(BaseModel):
+    تم_عكس_التوجيه: int
+    معكوس_جزئياً: int
+    غير_معكوسة: int
+    خارج_نطاق_العرض: int
+    score: float
+
+class PresentationDetails(BaseModel):
+    مطابقة_العرض: PresentationScore
+
+class PresentationRemarks(BaseModel):
+    الملاحظات: List[str]
+    التوصية: List[str]
+
 class PresentationDetailsResponse(BaseModel):
-    result: List[Union[Dict[str, Dict[str, Union[int, float]]], Dict[str, List[str]]]]
+    result: List[Union[PresentationDetails, PresentationRemarks]]
 
 class ReplacePersonResponse(BaseModel):
     name: str
 
+class MeetingAction(BaseModel):
+    action_name: str
+    status: str
+
 class ExtractActionsResponse(BaseModel):
-    meeting_data: List[Dict[str, str]]
+    meeting_data: List[MeetingAction]
 
 class DailyScheduleResponse(BaseModel):
     openaiFileResponse: List[OpenAIFileOut]
