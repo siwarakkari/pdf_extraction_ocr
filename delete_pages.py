@@ -28,3 +28,4 @@ def pdf_subset(pdf_bytes: bytes, keep_indices_zero_based: List[int]) -> bytes:
     buf = BytesIO()
     writer.write(buf)
     return buf.getvalue()
+

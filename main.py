@@ -205,7 +205,7 @@ async def extract_meeting(file: UploadFile = File(...), meeting_name: str = Form
     
 
 
-@app.post("/pdf/get_daily_schedule", response_class=StreamingResponse)
+@app.post("/get_daily_schedule", response_class=StreamingResponse)
 async def remove_pages(file: UploadFile = File(...)):
     if file.content_type not in ("application/pdf", "application/octet-stream"):
        raise HTTPException(status_code=400, detail="Please upload a PDF file")
@@ -218,4 +218,40 @@ async def remove_pages(file: UploadFile = File(...)):
     return StreamingResponse(BytesIO(new_pdf), media_type="application/pdf" ,headers={"Content-Disposition": "attachment; filename=Daily_schedule_table.pdf"}
 )
 
+@app.post("/get_daily_meeting")
+async def get_daily_schedule_data(file: UploadFile = File(...)):
+    if file.content_type not in ("application/pdf", "application/octet-stream"):
+        raise HTTPException(status_code=400, detail="Please upload a PDF file")
 
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    pdf_content = await file.read()
+    if not pdf_content:
+        raise HTTPException(status_code=400, detail="Empty file provided")
+
+    reader = PdfReader(BytesIO(pdf_content))
+    total = len(reader.pages)
+
+   
+    pages_to_remove = [1, 2, total]
+
+    # Normalize and subset
+    keep = normalize_page_indices_to_keep(total, pages_to_remove)
+    new_pdf = pdf_subset(pdf_content, keep)
+
+    # Get or initialize the document service
+    global doc_service
+    if doc_service is None:
+        doc_service = DocumentIntelligenceService()
+
+    # Analyze PDF with layout model
+    result = await doc_service.analyze_pdf(new_pdf)
+
+    # Transform into structured tables
+    transformed_result = _transform_to_keyed_tables(result)
+
+    # Extract meetings
+    meetings = extract_table_columns(transformed_result, target_columns=["الاجتماع"])
+
+    return JSONResponse(content={"meetings": meetings})
