@@ -10,3 +10,4 @@ pydantic==2.5.0
 PyPDF2==3.0.1
 pandas
 pypdf
+httpx

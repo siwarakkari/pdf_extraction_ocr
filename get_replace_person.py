@@ -7,28 +7,27 @@ def find_person_for_meeting(meeting_name: str, ocr_data: dict, meeting_col: int 
     Find the closest meeting name in OCR tables and return the corresponding person name.
     Handles row_span so names spanning multiple rows are correctly mapped.
     """
-    # Collect all meeting names with their row indexes
+
     meetings = []
-    meeting_rows = []  # store (page, table, row, content)
+    meeting_rows = [] 
     person_cells = []
 
     for page in ocr_data.get("pages_with_tables", []):
         for table in page.get("tables", []):
             for cell in table.get("cells", []):
-                # Meeting column
+
                 if cell.get("column_index") == meeting_col and cell.get("row_index") > 1:
                     content = cell.get("content", "").strip()
                     if content:
                         meetings.append(content)
                         meeting_rows.append((page["page_number"], table, cell["row_index"], content))
-                # Person column
+
                 if cell.get("column_index") == person_col and cell.get("row_index") > 1:
                     person_cells.append(cell)
     print(person_cells)
-
     print(meetings)
 
-    # Find closest meeting name
+
     closest_matches = get_close_matches(meeting_name, meetings, n=1, cutoff=0.5)
     print(closest_matches)
     if not closest_matches:
