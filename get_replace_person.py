@@ -5,23 +5,23 @@ import re
 
 def _is_valid_person_name(name: str) -> bool:
     """
-    Validate if a string looks like a person name (not notes or other text).
+    Validate if a string looks like a person name or valid delegation text.
     """
     if not name or len(name.strip()) == 0:
         return False
     
-    # Skip very long text (likely notes or descriptions)
+    # Allow the specific administrative note for "المجالس واللجان الخارجية"
+    if "تتم الموائمة مع الإدارة العامة للمجالس واللجان وأخذ المقترحات حسب ما تقتضيه حوكمة كل مجلس ولجنة" in name:
+        return True
+    
+    # Skip very long text (likely notes or descriptions) - but allow the specific note above
     if len(name) > 100:
         return False
     
-    # Skip text that contains common note indicators
+    # Skip text that contains common note indicators (but allow the specific delegation note)
     note_indicators = [
-        "تتم الموائمة",
-        "الإدارة العامة",
-        "المجالس واللجان",
-        "حوكمة",
         "مبدئية",
-        "غير معتمدة",
+        "غير معتمدة", 
         "موافقة معالي الوزير",
         "جميع المقترحات",
         "تعتبر",
@@ -41,11 +41,19 @@ def _is_valid_person_name(name: str) -> bool:
         "تحديثات",
         "خطة",
         "برنامج",
-        "مواضيع"
+        "مواضيع",
+        "خارجية",
+        "داخلية",
+        "تنفيذية",
+        "استراتيجية"
     ]
     
     meeting_word_count = sum(1 for word in meeting_words if word in name)
     if meeting_word_count >= 2:  # If it contains 2+ meeting-related words, it's likely a meeting title
+        return False
+    
+    # Skip text that contains "المجالس واللجان" (councils and committees) - this is a meeting title
+    if "المجالس واللجان" in name:
         return False
     
     # Skip pure numbers
@@ -58,12 +66,42 @@ def _is_valid_person_name(name: str) -> bool:
     
     return True
 
+def _analyze_table_structure(ocr_data: dict) -> None:
+    """
+    Analyze and print the table structure to help with debugging.
+    """
+    print("DEBUG: Analyzing table structure...")
+    for page in ocr_data.get("pages_with_tables", []):
+        for table_idx, table in enumerate(page.get("tables", [])):
+            print(f"DEBUG: Table {table_idx} on page {page.get('page_number')}: {table.get('row_count')} rows x {table.get('column_count')} columns")
+            
+            # Group cells by column to understand structure
+            columns = {}
+            for cell in table.get("cells", []):
+                col_idx = cell.get("column_index")
+                if col_idx not in columns:
+                    columns[col_idx] = []
+                columns[col_idx].append({
+                    "row": cell.get("row_index"),
+                    "content": cell.get("content", "").strip(),
+                    "span": cell.get("row_span", 1)
+                })
+            
+            # Show sample content from each column
+            for col_idx in sorted(columns.keys()):
+                col_cells = columns[col_idx]
+                sample_content = [cell["content"] for cell in col_cells[:5] if cell["content"]]
+                print(f"  Column {col_idx}: {sample_content}")
+
 def find_person_for_meeting(meeting_name: str, ocr_data: dict, meeting_col: int = 1, person_col: int = 2) -> Optional[str]:
     """
     Find the closest meeting name in OCR tables and return the corresponding person name.
     Handles row_span so names spanning multiple rows are correctly mapped.
     """
     print(f"DEBUG: Searching for meeting '{meeting_name}' in columns {meeting_col} and {person_col}")
+    
+    # Analyze table structure first
+    _analyze_table_structure(ocr_data)
 
     meetings = []
     meeting_rows = [] 
@@ -128,6 +166,8 @@ def find_person_for_meeting(meeting_name: str, ocr_data: dict, meeting_col: int 
     print(f"DEBUG: Matched meeting '{matched_meeting}' is at row {matched_row}")
 
     # Look for a person whose row spans cover this row
+    print(f"DEBUG: Looking for person in {len(person_cells)} person cells for row {matched_row}")
+    
     for cell in person_cells:
         start = cell.get("row_index")
         span = cell.get("row_span") or 1
@@ -136,13 +176,15 @@ def find_person_for_meeting(meeting_name: str, ocr_data: dict, meeting_col: int 
 
         print(f"DEBUG: Checking person '{person_name}' at row {start} (span: {span}, end: {end})")
         
-        # Validate that this looks like a person name (not notes or other text)
+        # Validate that this looks like a valid delegation response (person name or administrative note)
         if _is_valid_person_name(person_name):
             if start <= matched_row <= end:
-                print(f"DEBUG: Found matching person '{person_name}' for meeting '{matched_meeting}'")
+                print(f"DEBUG: Found matching delegation '{person_name}' for meeting '{matched_meeting}' (row {matched_row} is between {start}-{end})")
                 return person_name
+            else:
+                print(f"DEBUG: Delegation '{person_name}' at row {start}-{end} doesn't cover meeting row {matched_row}")
         else:
-            print(f"DEBUG: Skipping invalid person name: '{person_name}'")
+            print(f"DEBUG: Skipping invalid delegation text: '{person_name}'")
 
     print(f"DEBUG: No person found for meeting '{matched_meeting}' at row {matched_row}")
     
@@ -150,10 +192,12 @@ def find_person_for_meeting(meeting_name: str, ocr_data: dict, meeting_col: int 
     print("DEBUG: Trying alternative column configurations...")
     
     # Try different column combinations
+    # Based on the table structure: Column 0=Numbers, Column 1=Meeting Titles, Column 2=Person Names
     alternative_configs = [
+        (1, 2),  # meeting_col=1, person_col=2 (this should be the correct one)
         (0, 1),  # meeting_col=0, person_col=1
         (1, 0),  # meeting_col=1, person_col=0
-        (2, 3),  # meeting_col=2, person_col=3
+        (2, 1),  # meeting_col=2, person_col=1
         (0, 2),  # meeting_col=0, person_col=2
         (2, 0),  # meeting_col=2, person_col=0
     ]
@@ -201,7 +245,7 @@ def find_person_for_meeting(meeting_name: str, ocr_data: dict, meeting_col: int 
                         person_name = cell.get("content", "").strip()
                         
                         if _is_valid_person_name(person_name) and start <= alt_matched_row <= end:
-                            print(f"DEBUG: Found person '{person_name}' with alternative column config")
+                            print(f"DEBUG: Found delegation '{person_name}' with alternative column config")
                             return person_name
     
     print("DEBUG: No person found with any column configuration")
