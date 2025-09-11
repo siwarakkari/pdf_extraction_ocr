@@ -543,10 +543,10 @@ async def get_activities_status(
                 body = await request.json()
                 json_request = DailyMeetingRequest(**body)
 
-            if not json_request.get("openaiFileIdRefs"):
+            if not json_request.openaiFileIdRefs:
                 raise HTTPException(status_code=400, detail="No file references provided")
             
-            file_ref = json_request["openaiFileIdRefs"][0]
+            file_ref = json_request.openaiFileIdRefs[0]
             pdf_content = await download_file_from_openai(file_ref)
 
         # Handle direct PDF upload
@@ -618,9 +618,9 @@ async def extract_meeting(
         # JSON request
         content_type = request.headers.get("content-type", "")
         if "application/json" in content_type and json_request is not None:
-            if not json_request.get("openaiFileIdRefs"):
+            if not json_request.openaiFileIdRefs:
                 raise HTTPException(status_code=400, detail="No file references provided")
-            file_ref = json_request["openaiFileIdRefs"][1]
+            file_ref = json_request.openaiFileIdRefs[1]
             file_content = await download_file_from_openai(file_ref)
             filename = getattr(file_ref, "name", "spreadsheet.xlsx")
 
