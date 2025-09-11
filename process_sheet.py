@@ -48,6 +48,8 @@ class SpreadsheetProcessor:
         """
         if not name:
             return name
+        if not isinstance(name, str):
+           return ""
         
         # Remove extra spaces
         cleaned = re.sub(r'\s+', ' ', name.strip())
