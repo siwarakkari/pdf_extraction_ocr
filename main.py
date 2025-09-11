@@ -620,7 +620,7 @@ async def extract_meeting(
         if "application/json" in content_type and json_request is not None:
             if not json_request.openaiFileIdRefs:
                 raise HTTPException(status_code=400, detail="No file references provided")
-            file_ref = json_request.openaiFileIdRefs[1]
+            file_ref = json_request.openaiFileIdRefs[0]
             file_content = await download_file_from_openai(file_ref)
             filename = getattr(file_ref, "name", "spreadsheet.xlsx")
 
