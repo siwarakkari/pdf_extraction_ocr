@@ -654,7 +654,7 @@ async def extract_meeting(
 
 
 @app.post("/extract_actions_meetings")
-async def extract_meeting_actions(
+async def extract_actions_meetings(
     request: Request,
     file: UploadFile = File(None),
     meeting_list: List[str] = Form(None),  # Accept multiple meetings
