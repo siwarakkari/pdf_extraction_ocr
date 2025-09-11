@@ -86,3 +86,4 @@ class DailyScheduleResponse(BaseModel):
 
 class DailyMeetingResponse(BaseModel):
     meetings: Dict[str, List[str]]
+
