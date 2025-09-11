@@ -540,7 +540,7 @@ async def get_activities_status(
         content_type = request.headers.get("content-type", "")
         if "application/json" in content_type:
             if json_request is None:
-                json_request = await request.json()
+                body = await request.json()
                 json_request = DailyMeetingRequest(**body)
 
             if not json_request.get("openaiFileIdRefs"):
