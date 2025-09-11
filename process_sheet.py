@@ -83,7 +83,7 @@ class SpreadsheetProcessor:
         
         # If still no match, try partial matching
         if filtered.empty:
-            filtered = self.df[self.df["Cleaned_Meeting"].str.contains(cleaned_input, case=False, na=False)]
+            filtered = self.df[self.df["Meeting"].str.contains(cleaned_input, case=False, na=False)]
         if filtered.empty:
            return []
 
@@ -97,7 +97,6 @@ class SpreadsheetProcessor:
                 "meeting_name": str(row["Meeting"])  # Return original meeting name, not cleaned
             })
 
-        # Clean up temporary column
-        self.df = self.df.drop("Cleaned_Meeting", axis=1, errors='ignore')
+       
 
         return actions
