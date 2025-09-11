@@ -541,6 +541,7 @@ async def get_activities_status(
         if "application/json" in content_type:
             if json_request is None:
                 json_request = await request.json()
+                json_request = DailyMeetingRequest(**body)
 
             if not json_request.get("openaiFileIdRefs"):
                 raise HTTPException(status_code=400, detail="No file references provided")
