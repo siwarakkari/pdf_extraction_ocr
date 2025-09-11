@@ -532,73 +532,73 @@ async def get_activities_status(
     """
     Extract structured meeting names from a daily schedule PDF and return actions for all meetings.
     Supports both JSON requests and file uploads.
-    """
-    try:
-        pdf_content = None
+     """
+    # try:
+    pdf_content = None
 
-        # Check if JSON request
-        content_type = request.headers.get("content-type", "")
-        if "application/json" in content_type:
-            if json_request is None:
-                body = await request.json()
-                json_request = DailyMeetingRequest(**body)
+    # Check if JSON request
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        if json_request is None:
+            body = await request.json()
+            json_request = DailyMeetingRequest(**body)
 
-            if not json_request.openaiFileIdRefs:
-                raise HTTPException(status_code=400, detail="No file references provided")
-            
-            file_ref = json_request.openaiFileIdRefs[0]
-            pdf_content = await download_file_from_openai(file_ref)
+        if not json_request.openaiFileIdRefs:
+            raise HTTPException(status_code=400, detail="No file references provided")
+        
+        file_ref = json_request.openaiFileIdRefs[0]
+        pdf_content = await download_file_from_openai(file_ref)
 
-        # Handle direct PDF upload
-        elif file is not None:
-            if file.content_type not in ("application/pdf", "application/octet-stream"):
-                raise HTTPException(status_code=400, detail="Please upload a PDF file")
-            pdf_content = await file.read()
+    # Handle direct PDF upload
+    elif file is not None:
+        if file.content_type not in ("application/pdf", "application/octet-stream"):
+            raise HTTPException(status_code=400, detail="Please upload a PDF file")
+        pdf_content = await file.read()
 
-        else:
-            raise HTTPException(status_code=400, detail="Either JSON request or PDF upload required")
+    else:
+        raise HTTPException(status_code=400, detail="Either JSON request or PDF upload required")
 
-        if not pdf_content:
-            raise HTTPException(status_code=400, detail="Empty file provided")
+    if not pdf_content:
+        raise HTTPException(status_code=400, detail="Empty file provided")
 
-        # Process PDF (subset pages)
-        reader = PdfReader(BytesIO(pdf_content))
-        total_pages = len(reader.pages)
-        pages_to_remove = [1, 2, total_pages]
-        keep = normalize_page_indices_to_keep(total_pages, pages_to_remove)
-        new_pdf = pdf_subset(pdf_content, keep)
+    # Process PDF (subset pages)
+    reader = PdfReader(BytesIO(pdf_content))
+    total_pages = len(reader.pages)
+    pages_to_remove = [1, 2, total_pages]
+    keep = normalize_page_indices_to_keep(total_pages, pages_to_remove)
+    new_pdf = pdf_subset(pdf_content, keep)
 
-        # Analyze PDF
-        global doc_service
-        if doc_service is None:
-            doc_service = DocumentIntelligenceService()
-        result = await doc_service.analyze_pdf(new_pdf)
+    # Analyze PDF
+    global doc_service
+    if doc_service is None:
+        doc_service = DocumentIntelligenceService()
+    result = await doc_service.analyze_pdf(new_pdf)
 
-        # Transform to tables
-        transformed_result = _transform_to_keyed_tables(result)
-        meetings = extract_table_columns(transformed_result, target_columns=["الاجتماع"])
-        meetings_ = DailyMeetingResponse(meetings=meetings)
+    # Transform to tables
+    transformed_result = _transform_to_keyed_tables(result)
+    meetings = extract_table_columns(transformed_result, target_columns=["الاجتماع"])
+    meetings_ = DailyMeetingResponse(meetings=meetings)
 
-        # Process the Excel/CSV with meeting actions
-        tmp_path = await extract_meeting(request, file2, json_request=json_request)
-        processor = SpreadsheetProcessor(tmp_path)
-        print(f"DEBUG: Spreadsheet loaded successfully, columns: {list(processor.df.columns)}")
+    # Process the Excel/CSV with meeting actions
+    tmp_path = await extract_meeting(request, file2, json_request=json_request)
+    processor = SpreadsheetProcessor(tmp_path)
+    print(f"DEBUG: Spreadsheet loaded successfully, columns: {list(processor.df.columns)}")
 
-        all_meetings = meetings_.meetings.get("الاجتماع", [])
-        output = {}
-        for meeting_name in all_meetings:
-            if meeting_name.strip():
-                output[meeting_name] = processor.extract_meeting_info(meeting_name)
+    all_meetings = meetings_.meetings.get("الاجتماع", [])
+    output = {}
+    for meeting_name in all_meetings:
+        if meeting_name.strip():
+            output[meeting_name] = processor.extract_meeting_info(meeting_name)
 
-        os.remove(tmp_path)
+    os.remove(tmp_path)
 
-        if not output:
-            raise HTTPException(status_code=404, detail="No actions found for the provided meetings")
+    if not output:
+        raise HTTPException(status_code=404, detail="No actions found for the provided meetings")
 
-        return {"meetings_actions": output}
+    return {"meetings_actions": output}
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error extracting daily meetings: {str(e)}")
+    # except Exception as e:
+    #     raise HTTPException(status_code=500, detail=f"Error extracting daily meetings: {str(e)}")
 
 
 async def extract_meeting(
