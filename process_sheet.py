@@ -74,20 +74,16 @@ class SpreadsheetProcessor:
 
         # Clean the input meeting name
         cleaned_input = self.clean_meeting_name(meeting_name)
-        
-        # Clean meeting names in dataframe
-        self.df["Cleaned_Meeting"] = self.df["Meeting"].apply(self.clean_meeting_name)
-        
+                
         # Try exact match with cleaned names
-        filtered = self.df[self.df["Cleaned_Meeting"] == cleaned_input]
+        filtered = self.df[self.df["Meeting"] == cleaned_input]
         
-        # If no exact match, try case-insensitive match
-        if filtered.empty:
-            filtered = self.df[self.df["Cleaned_Meeting"].str.lower() == cleaned_input.lower()]
         
         # If still no match, try partial matching
         if filtered.empty:
             filtered = self.df[self.df["Cleaned_Meeting"].str.contains(cleaned_input, case=False, na=False)]
+        if filtered.empty:
+           return []
 
         # Build JSON output
         actions = []
