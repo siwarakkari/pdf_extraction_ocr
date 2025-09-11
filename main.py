@@ -20,7 +20,7 @@ import httpx
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from io import BytesIO
 from pypdf import PdfReader
-from typing import Optional, Union
+from typing import List, Optional, Union
 
 
 
@@ -648,6 +648,94 @@ async def extract_meeting(
             tmp_path = tmp_file.name
 
         return tmp_path
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process spreadsheet: {str(e)}")
+
+
+@app.post("/extract_actions_meetings")
+async def extract_meeting_actions(
+    request: Request,
+    file: UploadFile = File(None),
+    meeting_list: List[str] = Form(None),  # Accept multiple meetings
+    json_request: ExtractActionsRequest = None
+):
+    """Extract meeting actions from Excel/CSV. Supports both JSON (GPT) and multipart upload."""
+    try:
+        file_content = None
+        meeting_list_value = None
+        filename = None
+        
+        # Check if this is a JSON request (from GPT)
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            if json_request is None:
+                body = await request.json()
+                json_request = ExtractActionsRequest(**body)
+            
+            # Download file from OpenAI
+            if not json_request.openaiFileIdRefs:
+                raise HTTPException(status_code=400, detail="No file references provided")
+            
+            file_ref = json_request.openaiFileIdRefs[0]
+            file_content = await download_file_from_openai(file_ref)
+            meeting_list_value = json_request.meeting_list  # expects list
+            filename = file_ref.name or "spreadsheet.xlsx"
+            
+        # Handle multipart form data
+        elif file is not None and meeting_list is not None:
+            # Validate file type
+            if file.content_type not in (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "application/vnd.ms-excel",
+                "text/csv"
+            ):
+                raise HTTPException(status_code=400, detail="Unsupported file type. Use Excel or CSV")
+            
+            file_content = await file.read()
+            meeting_list_value = meeting_list
+            filename = file.filename
+            
+        else:
+            raise HTTPException(status_code=400, detail="Either JSON request or multipart form data required")
+        
+        if not file_content:
+            raise HTTPException(status_code=400, detail="Empty file provided")
+        
+        if not meeting_list_value or len(meeting_list_value) == 0:
+            raise HTTPException(status_code=400, detail="Meeting list is required")
+        
+        # Save file temporarily
+        file_extension = Path(filename).suffix
+        with NamedTemporaryFile(delete=False, suffix=file_extension) as tmp_file:
+            tmp_file.write(file_content)
+            tmp_path = tmp_file.name
+
+        # Process the spreadsheet
+        print(f"DEBUG: Processing spreadsheet '{filename}' for meetings {meeting_list_value}")
+        processor = SpreadsheetProcessor(tmp_path)
+        print(f"DEBUG: Spreadsheet loaded successfully, columns: {list(processor.df.columns)}")
+
+        all_meeting_actions = []
+        for meeting_name in meeting_list_value:
+            meeting_data = processor.extract_meeting_info(meeting_name)
+            print(f"DEBUG: Found {len(meeting_data)} actions for meeting '{meeting_name}'")
+
+            actions = [MeetingAction(
+                action_name=item["action_name"], 
+                status=item["status"],
+                meeting_name=item["meeting_name"]
+            ) for item in meeting_data]
+            
+            all_meeting_actions.extend(actions)
+
+        # Remove temp file
+        os.remove(tmp_path)
+
+        if not all_meeting_actions:
+            raise HTTPException(status_code=404, detail="No rows found for the provided meetings")
+
+        return ExtractActionsResponse(meeting_data=all_meeting_actions)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process spreadsheet: {str(e)}")
